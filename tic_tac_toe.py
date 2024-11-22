@@ -1,17 +1,20 @@
 import pygame
 import sys
 import mysql.connector
+import sqlalchemy
 import logging
+from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 pygame.init()
 
 # Размеры окна
-WIDTH, HEIGHT = 500, 700
+WIDTH, HEIGHT = 500, 500
 CELL_SIZE = WIDTH // 3
 
 # Настройки цвета
-GREY = (192, 192, 192)
-RED = (255, 50, 60)
+GREY = (90, 90, 115)
+RED = (255, 50, 60) 
 BLUE = (0, 191, 255)
 LINE_COLOR = (0, 0, 0)
 TEXT_COLOR = (0, 0, 0)
@@ -30,74 +33,30 @@ font = pygame.font.Font(None, 36)
 game_over = False
 game_message = ""
 
-def draw_board():
-    screen.fill(GREY)
-    # Рисуем линии
-    for i in range(1, 4):
-        pygame.draw.line(screen, LINE_COLOR, (i * CELL_SIZE, 0), (i * CELL_SIZE, HEIGHT), 5)
-        pygame.draw.line(screen, LINE_COLOR, (0, i * CELL_SIZE), (WIDTH, i * CELL_SIZE), 5)
+Base = declarative_base()
 
-    # Рисуем Х и О
-    for row in range(3):
-        for col in range(3):
-            if board[row][col] == "X":
-                pygame.draw.line(screen, RED, (col * CELL_SIZE + 30, row * CELL_SIZE + 30),
-                                 (col * CELL_SIZE + CELL_SIZE - 30, row * CELL_SIZE + CELL_SIZE - 30), 10)
-                pygame.draw.line(screen, RED, (col * CELL_SIZE + CELL_SIZE - 30, row * CELL_SIZE + 30),
-                                 (col * CELL_SIZE + 30, row * CELL_SIZE + CELL_SIZE - 30), 10)
-            elif board[row][col] == "O":
-                pygame.draw.circle(screen, BLUE, (col * CELL_SIZE + CELL_SIZE // 2, row * CELL_SIZE + CELL_SIZE // 2), 60, 10)
+# Определяем модели
+class Game(Base):
+    __tablename__ = 'players'
 
-    # Отображаем имена игроков
-    player_text = font.render(f'Player 1: {player1} (X)    Player 2: {player2} (O)', True, TEXT_COLOR)
-    screen.blit(player_text, (10, HEIGHT - 40))
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String)
+    playerX_score = Column(Integer)  
+    playerO_score = Column(Integer)  
 
-    # Отображаем сообщение о завершении игры, если это нужно
-    if game_over:
-        message_text = font.render(game_message, True, TEXT_COLOR)
-        screen.blit(message_text, (WIDTH // 2 - message_text.get_width() // 2, HEIGHT // 2 - 20))
+# Создаем подключение и сессию
+engine = create_engine('mysql+pymysql://is61-8:cxitmrxu@192.168.3.111:3306/tic_tac_toe')
+Session = sessionmaker(bind=engine)
 
-def create_connection():
+def save_game(session, name, playerX_score, playerO_score):
+    new_game = Game(name=name, playerX_score=playerX_score, playerO_score=playerO_score)
     try:
-        connection = mysql.connector.connect(host="192.168.3.111", user="is61-8", password="cxitmrxu", database="tic_tac_toe") 
-        print("Connection to MySQL DB successful")
-        return connection
-    except mysql.connector.Error as e:
-        print(f"The error '{e}' occurred")
-        return None
-
-def save_game(connection, player1, player2, winner):
-    cursor = connection.cursor()
-    query = "INSERT INTO games (playerX, playerO, winner) VALUES (%s, %s, %s)"
-    try:
-        cursor.execute(query, (player1, player2, winner))
-        connection.commit()
+        session.add(new_game)
+        session.commit()
         print("Game saved successfully")
-        
-        # Обновление результатов
-        update_scores(connection, winner)
-    except mysql.connector.Error as e:
+    except Exception as e:
+        session.rollback()
         print(f"Error saving game: {e}")
-
-def update_scores(connection, winner):
-    cursor = connection.cursor()
-    query = "INSERT INTO scores (playerX_score, playerO_score) VALUES (%s, %s) ON DUPLICATE KEY UPDATE "
-    if winner == "X":
-        query += "playerX_score = playerX_score + 1"
-    elif winner == "O":
-        query += "playerO_score = playerO_score + 1"
-    
-    try:
-        cursor.execute(query, (0, 0))  # Просто нужно передать что-то, здесь не важно
-        connection.commit()
-        print("Scores updated successfully")
-    except mysql.connector.Error as e:
-        print(f"Error updating scores: {e}")
-
-def get_scores(connection):
-    cursor = connection.cursor(dictionary=True)
-    cursor.execute("SELECT playerX_score, playerO_score FROM scores")
-    return cursor.fetchall()
 
 def check_winner():
     for row in board:
@@ -112,21 +71,10 @@ def check_winner():
         return board[0][2]
     return None
 
-def check_draw():
-    for row in board:
-        if "" in row:
-            return False
-    return True
-
-def reset_game(connection, player1, player2, winner=None):
+def reset_game():
     global board, current_player, game_over, game_message
-    if winner:
-        game_message = f'Player {winner} wins!'
-        save_game(connection, player1, player2, winner)
-    elif check_draw():
-        game_message = "It's a draw!"
-    
-    game_over = True
+    game_over = False
+    game_message = ""
     board = [["" for _ in range(3)] for _ in range(3)]
     current_player = "X"
 
@@ -162,28 +110,39 @@ def display_input_screen():
         screen.blit(input_text, (10, 10))
         pygame.display.flip()
 
-def draw_score(player1_score, player2_score):
-    score_text = font.render(f'Score - Player 1 (X): {player1_score}    Player 2 (O): {player2_score}', True, TEXT_COLOR)
-    screen.blit(score_text, (10, HEIGHT - 70))
+def draw_board():
+    screen.fill(GREY)
+    for i in range(1, 4):
+        pygame.draw.line(screen, LINE_COLOR, (i * CELL_SIZE, 0), (i * CELL_SIZE, HEIGHT), 5)
+        pygame.draw.line(screen, LINE_COLOR, (0, i * CELL_SIZE), (WIDTH, i * CELL_SIZE), 5)
+
+    for row in range(3):
+        for col in range(3):
+            if board[row][col] == "X":
+                pygame.draw.line(screen, RED, (col * CELL_SIZE + 30, row * CELL_SIZE + 30),
+                                 (col * CELL_SIZE + CELL_SIZE - 30, row * CELL_SIZE + CELL_SIZE - 30), 10)
+                pygame.draw.line(screen, RED, (col * CELL_SIZE + CELL_SIZE - 30, row * CELL_SIZE + 30),
+                                 (col * CELL_SIZE + 30, row * CELL_SIZE + CELL_SIZE - 30), 10)
+            elif board[row][col] == "O":
+                pygame.draw.circle(screen, BLUE, (col * CELL_SIZE + CELL_SIZE // 2, row * CELL_SIZE + CELL_SIZE // 2), 60, 10)
+
+    player_text = font.render(f'Player 1: {player1} (X)    Player 2: {player2} (O)', True, TEXT_COLOR)
+    screen.blit(player_text, (10, HEIGHT - 40))
+
+    if game_over:
+        message_text = font.render(game_message, True, TEXT_COLOR)
+        screen.blit(message_text, (WIDTH // 2 - message_text.get_width() // 2, HEIGHT // 2 - 20))
 
 def main():
     global current_player, game_over
 
     display_input_screen()
+    session = Session()  # Создаем сессию здесь
 
-    # Получаем текущий счёт из базы данных перед началом игры
-    connection = create_connection()
-    if connection:
-        scores = get_scores(connection)  
-        player1_score, player2_score = (scores[0]['playerX_score'], scores[0]['playerO_score']) if scores else (0, 0)  
-    else:
-        player1_score, player2_score = 0, 0  
-    
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                if connection:
-                    connection.close()
+                session.close()  # Закрываем сессию перед выходом
                 pygame.quit()
                 sys.exit()
 
@@ -194,18 +153,25 @@ def main():
                 if board[row][col] == "":
                     board[row][col] = current_player
                     winner = check_winner()
-                    
-                    if winner or check_draw():
-                        reset_game(connection, player1, player2, winner)
-                        if winner == "X":
-                            player1_score += 1
-                        elif winner == "O":
-                            player2_score += 1
-                    else:
-                        current_player = "O" if current_player == "X" else "X"
+
+                    if winner:
+                        game_message = f'Player {winner} wins!'
+                        game_over = True
+                        playerX_score = 1 if winner == "X" else 0
+                        playerO_score = 1 if winner == "O" else 0
+                        save_game(session, player1 + " vs " + player2, playerX_score, playerO_score)  # Передаем сессию
+                    elif all(cell != "" for row in board for cell in row):
+                        game_message = "It's a draw!"
+                        game_over = True
+                        save_game(session, player1 + " vs " + player2, 0, 0)  # Сохраняем ничью
+
+                    current_player = "O" if current_player == "X" else "X"
+
+            if event.type == pygame.KEYDOWN and game_over:
+                if event.key == pygame.K_SPACE:
+                    reset_game()  # Сброс игры после нажатия пробела
 
         draw_board()
-        draw_score(player1_score, player2_score)  # Отображаем счёт
         pygame.display.flip()
 
 logging.basicConfig(level=logging.INFO)
